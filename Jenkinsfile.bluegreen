@@ -114,7 +114,7 @@ pipeline {
                 sh '''
                     sleep 3
                     for i in $(seq 1 10); do
-                      curl -fs http://localhost:3000/api/health | grep -q "color.:.$NEW_COLOR" || { echo "Live check failed on attempt $i"; exit 1; }
+                      curl -fs http://localhost:8081/api/health | grep -q "color.:.$NEW_COLOR" || { echo "Live check failed on attempt $i"; exit 1; }
                       sleep 2
                     done
                     echo "Live traffic verified on $NEW_COLOR"

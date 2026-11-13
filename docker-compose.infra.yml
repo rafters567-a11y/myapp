@@ -22,7 +22,7 @@ services:
     container_name: bg-router
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "8081:80"
     volumes:
       - /opt/bluegreen/router:/etc/nginx/conf.d:ro
     networks:
@@ -37,4 +37,4 @@ networks:
 volumes:
   pgdata:
     external: true
-    name: myapp_pgdata
+    name: bg_pgdata
