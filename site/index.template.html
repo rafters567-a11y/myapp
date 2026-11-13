@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__COLOR__ environment</title>
+<style>
+  :root { --c: __COLOR__; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         font-family: system-ui, sans-serif; background: color-mix(in srgb, var(--c) 12%, white); }
+  .card { background: #fff; border-top: 10px solid var(--c); border-radius: 12px;
+          padding: 48px 64px; text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.12); }
+  h1 { margin: 0 0 8px; color: var(--c); text-transform: uppercase; letter-spacing: 2px; }
+  p { margin: 6px 0; color: #444; font-size: 20px; }
+  .badge { display: inline-block; margin-top: 16px; padding: 6px 14px; border-radius: 999px;
+           background: var(--c); color: #fff; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>__COLOR__ environment</h1>
+    <p>Version __VERSION__</p>
+    <span class="badge">Live via blue-green deployment</span>
+  </div>
+</body>
+</html>

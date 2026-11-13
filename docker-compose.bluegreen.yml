@@ -1,28 +1,15 @@
 services:
-  api:
-    build: ./api
-    restart: unless-stopped
-    environment:
-      PORT: 4000
-      DATABASE_URL: postgres://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-appdb}
-      DEPLOY_COLOR: ${COLOR}
-      APP_VERSION: ${APP_VERSION:-dev}
-    networks:
-      - default
-      - dbnet
-
   web:
-    build: ./frontend
-    restart: unless-stopped
+    build:
+      context: ./site
+      args:
+        COLOR: ${COLOR}
+        VERSION: ${APP_VERSION:-dev}
     container_name: web-${COLOR}
-    depends_on:
-      - api
+    restart: unless-stopped
     networks:
-      - default
       - edge
 
 networks:
-  dbnet:
-    external: true
   edge:
     external: true
