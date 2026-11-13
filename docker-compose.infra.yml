@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bg-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - dbnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  router:
+    image: nginx:1.27-alpine
+    container_name: bg-router
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - /opt/bluegreen/router:/etc/nginx/conf.d:ro
+    networks:
+      - edge
+
+networks:
+  dbnet:
+    name: dbnet
+  edge:
+    name: edge
+
+volumes:
+  pgdata:
+    external: true
+    name: myapp_pgdata

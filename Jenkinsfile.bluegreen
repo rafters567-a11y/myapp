@@ -1,0 +1,181 @@
+def notify(String msg) {
+    try {
+        withCredentials([string(credentialsId: 'slack-webhook', variable: 'HOOK')]) {
+            sh """
+                curl -s -X POST -H 'Content-type: application/json' \
+                  --data '{"text":"${msg}"}' \
+                  "\$HOOK"
+            """
+        }
+    } catch (err) {
+        echo "Notification skipped (webhook credential missing or call failed)"
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        booleanParam(name: 'SIMULATE_BAD_RELEASE', defaultValue: false,
+                     description: 'Fail right after the traffic switch to test the automatic rollback')
+    }
+
+    environment {
+        BG_DIR   = '/opt/bluegreen'
+        ENV_FILE = '/opt/bluegreen/.env'
+    }
+
+    stages {
+        stage('Clone') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Prepare shared services') {
+            steps {
+                sh '''
+                    docker compose -p bginfra -f docker-compose.infra.yml --env-file $ENV_FILE up -d
+                    for i in $(seq 1 30); do
+                      status=$(docker inspect -f '{{.State.Health.Status}}' bg-db 2>/dev/null || echo none)
+                      [ "$status" = "healthy" ] && exit 0
+                      sleep 2
+                    done
+                    echo "Database did not become healthy"
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Pick colors') {
+            steps {
+                script {
+                    def active = sh(script: "cat ${env.BG_DIR}/active_color 2>/dev/null || echo none", returnStdout: true).trim()
+                    env.OLD_COLOR = active
+                    env.NEW_COLOR = (active == 'blue') ? 'green' : 'blue'
+                    echo "Live color: ${env.OLD_COLOR}. Deploying new version to: ${env.NEW_COLOR}"
+                }
+            }
+        }
+
+        stage('Deploy new version (idle color)') {
+            steps {
+                sh '''
+                    COLOR=$NEW_COLOR APP_VERSION=$BUILD_NUMBER \
+                      docker compose -p app-$NEW_COLOR -f docker-compose.bluegreen.yml --env-file $ENV_FILE up -d --build
+                '''
+            }
+        }
+
+        stage('Smoke test (no live traffic yet)') {
+            steps {
+                sh '''
+                    ok=0
+                    for i in $(seq 1 40); do
+                      if docker exec web-$NEW_COLOR wget -qO- http://127.0.0.1/api/health 2>/dev/null | grep -q '"status":"ok"'; then
+                        ok=1
+                        break
+                      fi
+                      sleep 3
+                    done
+                    [ "$ok" = "1" ] || { echo "API health check failed"; exit 1; }
+                    docker exec web-$NEW_COLOR wget -qO- http://127.0.0.1/ | grep -q 'id="root"' || { echo "Frontend check failed"; exit 1; }
+                    docker exec web-$NEW_COLOR wget -qO- http://127.0.0.1/api/health | grep -q "color.:.$NEW_COLOR" || { echo "New color reports the wrong color"; exit 1; }
+                    echo "Smoke tests passed on $NEW_COLOR"
+                '''
+            }
+        }
+
+        stage('Switch traffic') {
+            steps {
+                script { env.SWITCHED = 'true' }
+                sh '''
+                    sed "s/__COLOR__/$NEW_COLOR/" router/default.conf.template > $BG_DIR/router/default.conf
+                    docker exec bg-router nginx -t
+                    docker exec bg-router nginx -s reload
+                '''
+            }
+        }
+
+        stage('Verify live traffic') {
+            steps {
+                script {
+                    if (params.SIMULATE_BAD_RELEASE) {
+                        error('Simulated bad release after the switch')
+                    }
+                }
+                sh '''
+                    sleep 3
+                    for i in $(seq 1 10); do
+                      curl -fs http://localhost:3000/api/health | grep -q "color.:.$NEW_COLOR" || { echo "Live check failed on attempt $i"; exit 1; }
+                      sleep 2
+                    done
+                    echo "Live traffic verified on $NEW_COLOR"
+                '''
+            }
+        }
+
+        stage('Finalize') {
+            steps {
+                sh '''
+                    echo $NEW_COLOR > $BG_DIR/active_color
+                    if [ "$OLD_COLOR" != "none" ]; then
+                      docker ps -q --filter label=com.docker.compose.project=app-$OLD_COLOR | xargs -r docker stop || true
+                    fi
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                notify("SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}, traffic switched from ${env.OLD_COLOR} to ${env.NEW_COLOR} - ${env.BUILD_URL}")
+            }
+        }
+        unsuccessful {
+            script {
+                echo '=== AUTOMATIC ROLLBACK ==='
+                if (env.SWITCHED == 'true') {
+                    if (env.OLD_COLOR && env.OLD_COLOR != 'none') {
+                        sh '''
+                            sed "s/__COLOR__/$OLD_COLOR/" router/default.conf.template > $BG_DIR/router/default.conf
+                            docker exec bg-router nginx -s reload
+                            echo $OLD_COLOR > $BG_DIR/active_color
+                            echo "Traffic restored to $OLD_COLOR"
+                        '''
+                    } else {
+                        sh '''
+                            cp router/maintenance.conf $BG_DIR/router/default.conf
+                            docker exec bg-router nginx -s reload
+                            echo "No previous version, router back to the maintenance page"
+                        '''
+                    }
+                } else {
+                    echo 'Traffic was never switched, nothing to roll back'
+                }
+                if (env.NEW_COLOR) {
+                    sh '''
+                        for c in $(docker ps -aq --filter label=com.docker.compose.project=app-$NEW_COLOR); do
+                          echo "--- logs from $c"
+                          docker logs --tail 30 $c 2>&1 || true
+                        done
+                        docker ps -aq --filter label=com.docker.compose.project=app-$NEW_COLOR | xargs -r docker rm -f
+                    '''
+                }
+                def live = (env.OLD_COLOR && env.OLD_COLOR != 'none') ? env.OLD_COLOR : 'nothing yet'
+                notify("FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}, rolled back, traffic stays on ${live} - ${env.BUILD_URL}")
+            }
+        }
+        always {
+            sh 'docker image prune -f || true'
+        }
+    }
+}

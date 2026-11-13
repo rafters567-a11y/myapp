@@ -13,9 +13,8 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'sans-serif', textAlign: 'center', marginTop: '80px' }}>
       <h1>Hyyy, welcome to Multi Service App</h1>
-      <p>
-        API status: <strong>{data ? data.status : 'loading...'}</strong>
-      </p>
+      <p>API status: <strong>{data ? data.status : 'loading...'}</strong></p>
+      {data && data.color && <p>Running on: <strong>{data.color}</strong> (build {data.version})</p>}
       {data && data.dbTime && <p>Database time: {data.dbTime}</p>}
     </div>
   );
